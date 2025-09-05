@@ -69,29 +69,28 @@ async def cmd_kompli(update: Update, _: ContextTypes.DEFAULT_TYPE):
 # === INLINE ===
 async def inline_handler(update: Update, _: ContextTypes.DEFAULT_TYPE):
     """
-    Отдаём одну карточку с публичным RAW-URL из GitHub и кнопкой “Ещё ✨”.
+    Отдаём карточку даже на пустой запрос, чтобы работать по одному @упоминанию.
     """
     q = (update.inline_query.query or "").strip().lower()
-    if not q or ("kompli" not in q and "компли" not in q and "compl" not in q):
-        return  # не засоряем подсказки
 
+    # берём имя локального файла (для ротации), а ссылку используем публичную
     local_path = next_image()
     filename = local_path.name
-    public_url = f"{GITHUB_RAW_BASE}/{filename}"  # RAW ссылка
+
+    # ВАЖНО: база должна быть RAW, не /tree/. Пример:
+    # https://raw.githubusercontent.com/<user>/<repo>/main/images
+    public_url = f"{GITHUB_RAW_BASE}/{filename}"
 
     caption = f"{pick_emoji()} {display_name(update.effective_user)}"
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("Ещё ✨", switch_inline_query_current_chat="kompli")
-    ]])
 
     result = InlineQueryResultPhoto(
         id=str(uuid4()),
         photo_url=public_url,
         thumb_url=public_url,
         caption=caption,
-        reply_markup=kb,
     )
 
+    # cache_time=0 на отладку; потом можно 60–300
     await update.inline_query.answer([result], cache_time=0, is_personal=True)
 
 def main():
