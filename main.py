@@ -2,6 +2,7 @@ import os
 import random
 from uuid import uuid4
 from pathlib import Path
+from urllib.parse import quote
 
 from telegram import Update, User, InlineQueryResultPhoto
 from telegram.ext import Application, CommandHandler, ContextTypes, InlineQueryHandler
@@ -56,42 +57,29 @@ async def cmd_kompli(update: Update, _: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Ошибка: {e}")
 
 # === INLINE  ===
-from urllib.parse import quote
-from uuid import uuid4
-from telegram import InlineQueryResultPhoto
-
-GITHUB_RAW_BASE = "https://raw.githubusercontent.com/miza1911/kompli-bot/main/images"
-
 async def inline_handler(update: Update, _: ContextTypes.DEFAULT_TYPE):
-    """
-    Показываем одну карточку в инлайн-выборе. Каждый раз формируем её
-    с новой случайной картинкой и уникальным id, чтобы Telegram не кешировал.
-    По тапу в чат уходит фото + подпись.
-    """
-    # (плитка должна появляться даже при пустом запросе '@noskompli_bot ')
-    _ = (update.inline_query.query or "").strip()
+    # даже при пустом запросе '@noskompli_bot ' показываем плитку
+    _ = (update.inline_query.query or "")
 
-    # берём случайный локальный файл и строим публичный raw-URL
+    # берём следующий файл из твоей ротации
     local_path = next_image()
-    filename = quote(local_path.name)  # экранируем пробелы/кириллицу
-    # добавляем "соль" в URL, чтобы обойти CDN-кеш Telegram
-    bust = uuid4().hex
+    filename = quote(local_path.name)              # экранируем пробелы/кириллицу
+    bust = uuid4().hex                             # "соль" против кеша
     public_url = f"{GITHUB_RAW_BASE}/{filename}?v={bust}"
 
     caption = f"Твой комплимент дня, {display_name(update.effective_user)}! {pick_emoji()}"
 
     result = InlineQueryResultPhoto(
-        id=str(uuid4()),              # уникальный id результата — обязательно
-        photo_url=public_url,         # картинка, которую отправим
-        thumb_url=public_url,         # превью (можно ту же ссылку)
-        title="Отправить комплимент дня",               # заголовок плитки
-        description="Случайная картинка с подписью ✨", # описание под заголовком
-        caption=caption,              # подпись к фото в чате
+        id=str(uuid4()),                           # уникальный id результата
+        photo_url=public_url,
+        thumb_url=public_url,
+        title="Отправить комплимент дня",          # заголовок плитки
+        description="Случайная картинка с подписью ✨",
+        caption=caption                            # подпись как у /kompli
     )
 
-    # cache_time=0 и is_personal=True — просим Telegram не кешировать для пользователя
+    # без кеша, чтобы каждый раз была новая карточка/картинка
     await update.inline_query.answer([result], cache_time=0, is_personal=True)
-
 
 
 
