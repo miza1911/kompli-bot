@@ -66,7 +66,8 @@ async def inline_handler(update: Update, _: ContextTypes.DEFAULT_TYPE):
     # Всегда берём случайную картинку
     local_path = next_image()
     filename = local_path.name
-    public_url = f"{GITHUB_RAW_BASE}/{filename}"
+    public_url = f"https://raw.githubusercontent.com/miza1911/kompli-bot/main/images/{filename}"
+
 
     caption = f"{display_name(update.effective_user)} 🌟 Твой комплимент дня! {pick_emoji()}"
 
