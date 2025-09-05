@@ -58,15 +58,17 @@ async def cmd_kompli(update: Update, _: ContextTypes.DEFAULT_TYPE):
 # === INLINE ===
 async def inline_handler(update: Update, _: ContextTypes.DEFAULT_TYPE):
     """
-    Отдаём одну карточку без кнопок.
-    Картина берётся по публичной raw-ссылке (GitHub), имена совпадают с локальными.
+    Отдаём карточку с публичным URL из GitHub и подписью.
+    Даже если пользователь ничего не написал.
     """
-    # Хотим показывать плитку сразу даже на пустой запрос — не фильтруем по query
+    q = (update.inline_query.query or "").strip().lower()
+
+    # Всегда берём случайную картинку
     local_path = next_image()
     filename = local_path.name
     public_url = f"{GITHUB_RAW_BASE}/{filename}"
 
-    caption = f"Твой комплимент дня, {display_name(update.effective_user)}! {pick_emoji()}"
+    caption = f"{display_name(update.effective_user)} 🌟 Твой комплимент дня! {pick_emoji()}"
 
     result = InlineQueryResultPhoto(
         id=str(uuid4()),
@@ -75,7 +77,9 @@ async def inline_handler(update: Update, _: ContextTypes.DEFAULT_TYPE):
         caption=caption,
     )
 
+    # Если запрос пустой → всё равно отдаём результат
     await update.inline_query.answer([result], cache_time=0, is_personal=True)
+
 
 def main():
     if not TOKEN:
