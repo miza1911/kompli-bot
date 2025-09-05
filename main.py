@@ -10,21 +10,23 @@ from telegram import (
 from telegram.ext import Application, CommandHandler, ContextTypes, InlineQueryHandler
 
 # === НАСТРОЙКИ ===
-TOKEN = os.getenv("TOKEN")  # хранится в Fly Secrets
+TOKEN = os.getenv("TOKEN")  # на Fly хранится в Secrets
 IMAGES_DIR = Path("images")  # локальные картинки для /kompli
 
-
-BASE_URL = "https://raw.githubusercontent.com/miza1911/kompli-bot/main/images"
+# ВАЖНО: public RAW-URL (а не /tree/). Замени на свой репозиторий при необходимости.
+GITHUB_RAW_BASE = "https://raw.githubusercontent.com/miza1911/kompli-bot/main/images"
 
 EMOJI_POOL = list("✨🌟💫☀️🌈🔥🌸⭐️🌼🌻🌙💎💖💚💙💜🤍🤎")
 
-# ротация без повторов (имена файлов)
+# Очередь для "без повторов"
 _queue: list[str] = []
 
-def _ensure_images_list() -> list[str]:
+def _list_image_files() -> list[str]:
+    if not IMAGES_DIR.exists():
+        raise FileNotFoundError("Папка images не найдена рядом с main.py")
     files = [
         f.name for f in IMAGES_DIR.iterdir()
-        if f.is_file() and f.suffix.lower() in {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+        if f.is_file() and f.suffix.lower() in {".jpg", ".jpeg", ".png", ".gif"}
     ]
     if not files:
         raise FileNotFoundError("В папке images нет картинок")
@@ -34,7 +36,7 @@ def next_image() -> Path:
     """Следующая локальная картинка без повторов до полного цикла."""
     global _queue
     if not _queue:
-        files = _ensure_images_list()
+        files = _list_image_files()
         random.shuffle(files)
         _queue = files
     return IMAGES_DIR / _queue.pop()
@@ -48,7 +50,7 @@ def display_name(u: User) -> str:
 # === КОМАНДЫ ===
 async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Привет! /kompli — И ты получишь свой комплимент дня! ✨\n"
+        "Привет! Команда: /kompli — и я пришлю твой комплимент дня! ✨\n"
         
     )
 
@@ -56,24 +58,26 @@ async def cmd_kompli(update: Update, _: ContextTypes.DEFAULT_TYPE):
     try:
         img_path = next_image()
         caption = f"{pick_emoji()} {display_name(update.effective_user)}"
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("Ещё ✨", switch_inline_query_current_chat="kompli")
-        ]])
         with open(img_path, "rb") as f:
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("Ещё ✨", switch_inline_query_current_chat="kompli")
+            ]])
             await update.message.reply_photo(photo=f, caption=caption, reply_markup=kb)
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")
 
 # === INLINE ===
 async def inline_handler(update: Update, _: ContextTypes.DEFAULT_TYPE):
-    """Выдаём одну карточку через публичный raw-URL + кнопка 'Ещё ✨'."""
+    """
+    Отдаём одну карточку с публичным RAW-URL из GitHub и кнопкой “Ещё ✨”.
+    """
     q = (update.inline_query.query or "").strip().lower()
     if not q or ("kompli" not in q and "компли" not in q and "compl" not in q):
-        return
+        return  # не засоряем подсказки
 
     local_path = next_image()
     filename = local_path.name
-    public_url = f"{BASE_URL}/{filename}"
+    public_url = f"{GITHUB_RAW_BASE}/{filename}"  # RAW ссылка
 
     caption = f"{pick_emoji()} {display_name(update.effective_user)}"
     kb = InlineKeyboardMarkup([[
@@ -87,11 +91,12 @@ async def inline_handler(update: Update, _: ContextTypes.DEFAULT_TYPE):
         caption=caption,
         reply_markup=kb,
     )
+
     await update.inline_query.answer([result], cache_time=0, is_personal=True)
 
 def main():
     if not TOKEN:
-        raise SystemExit("❌ Нет токена (секрет TOKEN на Fly).")
+        raise SystemExit("❌ Нет токена в переменной окружения TOKEN (секрет Fly).")
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("kompli", cmd_kompli))
@@ -99,5 +104,6 @@ def main():
     print("✅ Бот запущен: /kompli и inline (@бот kompli)")
     app.run_polling(drop_pending_updates=True)
 
-if name == "__main__":
+if __name__ == "__main__":
     main()
+
