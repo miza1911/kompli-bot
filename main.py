@@ -7,19 +7,23 @@ from telegram import Update, User, InlineQueryResultPhoto
 from telegram.ext import Application, CommandHandler, ContextTypes, InlineQueryHandler
 
 # === НАСТРОЙКИ ===
-TOKEN = os.getenv("TOKEN")                       # токен берём из переменной окружения (Fly secrets)
-IMAGES_DIR = Path("images")                      # локальные картинки для /kompli
-# RAW-URL публичного репозитория с теми же именами файлов:
+TOKEN = os.getenv("TOKEN")  
+IMAGES_DIR = Path("images")  
+
+
 GITHUB_RAW_BASE = "https://raw.githubusercontent.com/miza1911/kompli-bot/main/images"
 
 EMOJI_POOL = list("✨🌟💫☀️🌈🔥🌸⭐️🌼🌻🌙💎💖💚💙💜🤍🤎")
 
+# ротация без повторов
 _queue: list[str] = []
 
 def next_image() -> Path:
-    """Вернёт путь к следующей локальной картинке без повторов до полного цикла."""
+    """Следующая локальная картинка без повторов до полного цикла."""
     global _queue
     if not _queue:
+        if not IMAGES_DIR.exists():
+            raise FileNotFoundError("Папка images не найдена в проекте")
         files = [
             f.name for f in IMAGES_DIR.iterdir()
             if f.is_file() and f.suffix.lower() in {".jpg", ".jpeg", ".png", ".gif"}
@@ -36,52 +40,52 @@ def pick_emoji() -> str:
 def display_name(u: User) -> str:
     return f"@{u.username}" if u and u.username else (u.first_name if u and u.first_name else "друг")
 
-def make_caption(u: User) -> str:
-    return f"{display_name(u)}: Твой комплимент дня {pick_emoji()}"
-
-
 # === КОМАНДЫ ===
 async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет! Напиши /kompli — И я пришлю твой комплимент дня! ✨")
+    await update.message.reply_text(
+        "Привет! Напиши /kompli — И ты получишь комплимент дня! ✨"
+    )
 
 async def cmd_kompli(update: Update, _: ContextTypes.DEFAULT_TYPE):
     try:
         img_path = next_image()
-        caption = make_caption(update.effective_user)
+        caption = f"Твой комплимент дня, {display_name(update.effective_user)}! {pick_emoji()}"
         with open(img_path, "rb") as f:
-            await update.message.reply_photo(photo=f, caption=caption)  # без кнопок
+            await update.message.reply_photo(photo=f, caption=caption)
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")
 
-# === INLINE (@бот в любом чате) — без кнопок ===
-# ... внутри inline_handler, при формировании results:
-caption = make_caption(update.effective_user)
+# === INLINE ===
+async def inline_handler(update: Update, _: ContextTypes.DEFAULT_TYPE):
+    """
+    Отдаём одну карточку без кнопок.
+    Картина берётся по публичной raw-ссылке (GitHub), имена совпадают с локальными.
+    """
+    # Хотим показывать плитку сразу даже на пустой запрос — не фильтруем по query
+    local_path = next_image()
+    filename = local_path.name
+    public_url = f"{GITHUB_RAW_BASE}/{filename}"
 
-if is_gif(p):
-    results.append(
-        InlineQueryResultGif(
-            id=str(uuid4()),
-            gif_url=public_url,
-            thumb_url=public_url,
-            caption=caption,
-            # 👇 это добавит текст под превью в списке
-            title=caption
-        )
-    )
-else:
-    results.append(
-        InlineQueryResultPhoto(
-            id=str(uuid4()),
-            photo_url=public_url,
-            thumb_url=public_url,
-            caption=caption,
-            # 👇 это добавит текст под превью в списке
-            title=caption
-        )
+    caption = f"Твой комплимент дня, {display_name(update.effective_user)}! {pick_emoji()}"
+
+    result = InlineQueryResultPhoto(
+        id=str(uuid4()),
+        photo_url=public_url,
+        thumb_url=public_url,
+        caption=caption,
     )
 
+    await update.inline_query.answer([result], cache_time=0, is_personal=True)
+
+def main():
+    if not TOKEN:
+        raise SystemExit("❌ Нет токена в переменной TOKEN (секрет Fly).")
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("kompli", cmd_kompli))
+    app.add_handler(InlineQueryHandler(inline_handler))
+    print("✅ Бот запущен: /kompli и inline (@бот)")
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
-
-
