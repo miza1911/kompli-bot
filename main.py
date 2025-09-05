@@ -56,32 +56,34 @@ async def cmd_kompli(update: Update, _: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Ошибка: {e}")
 
 # === INLINE ===
-from telegram import InlineQueryResultPhoto
 from uuid import uuid4
+from urllib.parse import quote
+from telegram import InlineQueryResultPhoto
 
-async def inline_handler(update: Update, _: ContextTypes.DEFAULT_TYPE):
-    """
-    В инлайне показываем и отправляем КАРТИНКУ.
-    Берём имя файла из локальной папки images (для ротации),
-    а ссылку — публичную из GitHub RAW.
-    """
-    # даже если запрос пустой (@noskompli_bot␣) — всё равно отвечаем
-    _ = (update.inline_query.query or "").strip()
+GITHUB_RAW_BASE = "https://raw.githubusercontent.com/miza1911/kompli-bot/main/images"
 
-    local_path = next_image()             # напр. images/photo_...jpg
-    filename = local_path.name
-    public_url = f"https://raw.githubusercontent.com/miza1911/kompli-bot/main/images/{filename}"
+async def inline_handler(update, _):
+    # показываем карточку даже без текста запроса
+    q = (update.inline_query.query or "").strip().lower()
+
+    # берём файл из твоей ротации
+    local_path = next_image()
+    filename = quote(local_path.name)  # экранируем пробелы/кириллицу
+    public_url = f"{GITHUB_RAW_BASE}/{filename}"
 
     caption = f"Твой комплимент дня, {display_name(update.effective_user)}! {pick_emoji()}"
 
     result = InlineQueryResultPhoto(
         id=str(uuid4()),
-        photo_url=public_url,   # изображение берётся по этой ссылке
-        thumb_url=public_url,   # миниатюра (можно ту же)
-        caption=caption,
+        photo_url=public_url,
+        thumb_url=public_url,           # можно ту же ссылку
+        title="Отправить комплимент дня",       # <- заголовок в полоске
+        description="Картинка + подпись с твоим ником",  # <- описание в полоске
+        caption=caption                 # что реально уйдёт в чат
     )
 
     await update.inline_query.answer([result], cache_time=0, is_personal=True)
+
 
 
 
