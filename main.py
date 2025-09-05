@@ -47,7 +47,7 @@ def pick_caption(user) -> str:
 
 
 async def start(update: Update, _: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет! Напиши /kompli, и я пришлю картинку + комплимент дня 🌟")
+    await update.message.reply_text("Привет! Напиши /kompli, и я пришлю комплимент дня 🌟")
 
 
 async def kompli(update: Update, _: ContextTypes.DEFAULT_TYPE):
