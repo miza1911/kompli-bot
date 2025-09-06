@@ -1,21 +1,66 @@
 # main.py — один файл, всё в одном: aiogram v3 + FastAPI + inline-всплывашка + /kompli
 import os
-import json
 import random
-import sqlite3
 import uuid
-from pathlib import Path
-from typing import List, Optional
-from urllib.parse import quote
+from telebot import TeleBot, types
 
-from fastapi import FastAPI, Request
-from fastapi.responses import PlainTextResponse
-from fastapi.staticfiles import StaticFiles
+TOKEN = os.getenv("BOT_TOKEN", "YOUR_TOKEN_HERE")
+bot = TeleBot(TOKEN, parse_mode="HTML")
 
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.types import InlineQuery, InlineQueryResultPhoto
-from aiogram.exceptions import TelegramBadRequest
+# --- ваши картинки на GitHub (RAW HTTPS ссылки) ---
+IMAGES = [
+    # примеры: замените на свои raw-ссылки
+    "https://raw.githubusercontent.com/miza1911/kompli-bot/main/images/photo_2025-09-05_21-49-56.jpg",
+   
+]
+
+COMPLIMENTS = [
+    "Ты сегодня блестяще выглядишь ✨",
+    "Твоё чувство юмора — топ! 😄",
+    "С тобой всё получается легче 🌸",
+]
+
+# --- Команды (подсказки при вводе / ) ---
+bot.set_my_commands([
+    types.BotCommand("kompli", "Отправить комплимент дня"),
+    types.BotCommand("help", "Показать помощь"),
+])
+
+def pick():
+    return random.choice(IMAGES), random.choice(COMPLIMENTS)
+
+# --- /kompli: обычная команда ---
+@bot.message_handler(commands=["kompli"])
+def cmd_kompli(m):
+    img, text = pick()
+    bot.send_photo(m.chat.id, img, caption=f"Комплимент дня: {text}")
+
+@bot.message_handler(commands=["help", "start"])
+def cmd_help(m):
+    bot.reply_to(
+        m,
+        "Напиши /kompli или используй inline:\n"
+        "в любом чате введи @<имя_бота> и выбери карточку."
+    )
+
+# --- INLINE MODE: @botname → всплывающее окно с карточкой ---
+@bot.inline_handler(func=lambda q: True)
+def inline(q: types.InlineQuery):
+    img, text = pick()
+    results = [
+        types.InlineQueryResultPhoto(
+            id=str(uuid.uuid4()),
+            photo_url=img,
+            thumb_url=img,
+            caption=f"Комплимент дня: {text}"
+        )
+    ]
+    # cache_time=0, чтобы изменения были заметны сразу
+    bot.answer_inline_query(q.id, results=results, cache_time=0, is_personal=True)
+
+bot.polling(none_stop=True)
+
+
 
 # ---------- ENV ----------
 BOT_TOKEN = os.environ["BOT_TOKEN"]                         # секрет на Fly
