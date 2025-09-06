@@ -112,6 +112,11 @@ async def on_kompli(m: types.Message):
         await m.answer("Не удалось отправить изображение. Попробуй позже.")
 
 # ---------- INLINE (всплывающее окно при @бот⎵) ----------
+from aiogram.types import (
+    InlineQuery, InlineQueryResultPhoto,
+    InlineQueryResultArticle, InputTextMessageContent
+)
+
 @dp.inline_query()
 async def on_inline(q: InlineQuery):
     url = _next_image_url()
@@ -128,15 +133,28 @@ async def on_inline(q: InlineQuery):
     uname = f"@{(q.from_user.username or q.from_user.full_name).replace(' ', '_')}"
     caption = f"Твой комплимент дня, {uname} 🌼"
 
-    result = InlineQueryResultPhoto(
+    # 1) «Серая» плитка (Article) — просто для красивого всплывания
+    article = InlineQueryResultArticle(
+        id=str(uuid.uuid4()),
+        title="Комплимент дня",
+        description="Нажми, чтобы отправить картинку с подписью",
+        input_message_content=InputTextMessageContent(
+            "Выбирай карточку ниже 👇 (это плитка для всплывашки)"
+        ),
+    )
+
+    # 2) Реальная отправка фото
+    photo = InlineQueryResultPhoto(
         id=str(uuid.uuid4()),
         photo_url=url,
         thumb_url=url,
         caption=caption,
-        title="Отправить комплимент дня",
-        description="Картинка + подпись с твоим ником",
+        title="Отправить картинку",      # не везде видно, но не мешает
+        description="Картинка + подпись",
     )
-    await q.answer([result], cache_time=1, is_personal=True)
+
+    # Сначала плитка, потом фото
+    await q.answer([article, photo], cache_time=1, is_personal=True)
 
 # ---------- FASTAPI / WEBHOOK ----------
 app = FastAPI()
