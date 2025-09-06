@@ -152,17 +152,31 @@ def health():
 
 @app.post(f"/webhook/{{token}}")
 async def telegram_webhook(request: Request, token: str):
-    # принимать только свой токен в пути
+    # Принимаем апдейты только по своему токену
     if token != BOT_TOKEN:
         return {"ok": False}
-    update = types.Update.model_validate(await request.json(), context={"bot": bot})
-    await dp.feed_update(bot, update)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        # на всякий пожарный
+        return {"ok": True}
+
+    try:
+        update = types.Update.model_validate(payload)  # aiogram 3.x — без context
+        await dp.feed_update(bot, update)
+    except Exception as e:
+        # не роняем 500 — логируй у себя, но телеге всегда OK
+        # можно добавить print(str(e)) — увидишь в логах Fly
+        return {"ok": True}
+
     return {"ok": True}
 
 @app.on_event("startup")
 async def on_startup():
-    # Разрешаем inline/сообщения/колбэки на вебхуке
+    # Явно разрешаем inline
     await bot.set_webhook(
         f"{PUBLIC_URL}/webhook/{BOT_TOKEN}",
-        allowed_updates=["message", "inline_query", "callback_query"]
+        allowed_updates=["message", "inline_query", "callback_query"],
+        drop_pending_updates=False
     )
