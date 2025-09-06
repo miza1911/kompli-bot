@@ -1,7 +1,5 @@
-# fly.toml
-
-app = "kompli-bot"
-primary_region = "sin"   # можно заменить на ближайший регион
+app = "kompli-bot"        # <-- точное имя твоего приложения
+primary_region = "sin"
 
 [build]
   dockerfile = "Dockerfile"
@@ -23,3 +21,4 @@ primary_region = "sin"   # можно заменить на ближайший �
   path = "/"
   protocol = "http"
   timeout = "2s"
+
