@@ -22,7 +22,7 @@ PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")    # https://kompli-bot.fly.de
 
 # -------- PATHS / STATIC --------
 ROOT = Path(__file__).parent
-IMAGES_DIR = ROOT / "images"                         # кладём картинки сюда (в корень репо /images)
+IMAGES_DIR = ROOT / "images"                         # кладём картинки сюда (в корне репо /images)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 # -------- DB (deck state) --------
@@ -110,30 +110,37 @@ async def on_kompli(m: types.Message):
     except TelegramBadRequest:
         await m.answer("Не удалось отправить изображение. Попробуй позже.")
 
+# ====== INLINE: всплывающее окно по @username⎵ ======
 @dp.inline_query()
 async def on_inline(q: InlineQuery):
-    """Всплывающее окно по @username⎵ — отдаем одну плитку с фото."""
+    """
+    Возвращаем одну плитку. По нажатию отправится фото + подпись с ником.
+    cache_time=1 и is_personal=True — чтобы подпись была персональной.
+    """
     url = _next_image_url()
     if not url:
         await q.answer(
             results=[],
             switch_pm_text="Добавь картинки в /images",
             switch_pm_parameter="noimages",
-            cache_time=1, is_personal=True
+            cache_time=1,
+            is_personal=True
         )
         return
+
     uname = f"@{(q.from_user.username or q.from_user.full_name).replace(' ', '_')}"
     caption = f"Твой комплимент дня, {uname} 🌼"
+
     result = InlineQueryResultPhoto(
         id=str(uuid.uuid4()),
         photo_url=url,
         thumb_url=url,
         caption=caption,
         title="Отправить комплимент дня",
-        description="Картинка + подпись с твоим ником"
+        description="Картинка + подпись с твоим ником",
     )
-    # cache_time=1 — чтобы подпись была персональная для каждого юзера
     await q.answer([result], cache_time=1, is_personal=True)
+# ====== /INLINE ======
 
 # -------- FASTAPI / WEBHOOK --------
 app = FastAPI()
@@ -143,8 +150,11 @@ app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images")
 def health():
     return "ok"
 
-@app.post(f"/webhook/{BOT_TOKEN}")
-async def telegram_webhook(request: Request):
+@app.post(f"/webhook/{{token}}")
+async def telegram_webhook(request: Request, token: str):
+    # принимать только свой токен в пути
+    if token != BOT_TOKEN:
+        return {"ok": False}
     update = types.Update.model_validate(await request.json(), context={"bot": bot})
     await dp.feed_update(bot, update)
     return {"ok": True}
