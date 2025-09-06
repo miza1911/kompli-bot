@@ -1,17 +1,21 @@
-# main.py — один файл, всё в одном: aiogram v3 + FastAPI + inline-всплывашка + /kompli
 import os
 import random
 import uuid
-from telebot import TeleBot, types
+import asyncio
 
-TOKEN = os.getenv("BOT_TOKEN", "YOUR_TOKEN_HERE")
-bot = TeleBot(TOKEN, parse_mode="HTML")
+from fastapi import FastAPI
+import uvicorn
 
-# --- ваши картинки на GitHub (RAW HTTPS ссылки) ---
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message, InlineQuery, InlineQueryResultPhoto, BotCommand
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
+
+# --- Config ---
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_TOKEN_HERE")
+
 IMAGES = [
-    # примеры: замените на свои raw-ссылки
     "https://raw.githubusercontent.com/miza1911/kompli-bot/main/images/photo_2025-09-05_21-49-56.jpg",
-   
 ]
 
 COMPLIMENTS = [
@@ -20,14 +24,59 @@ COMPLIMENTS = [
     "С тобой всё получается легче 🌸",
 ]
 
-# --- Команды (подсказки при вводе / ) ---
-bot.set_my_commands([
-    types.BotCommand("kompli", "Отправить комплимент дня"),
-    types.BotCommand("help", "Показать помощь"),
-])
+# --- aiogram setup ---
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+dp = Dispatcher()
 
 def pick():
     return random.choice(IMAGES), random.choice(COMPLIMENTS)
+
+# --- Commands ---
+@dp.message(F.text == "/kompli")
+async def cmd_kompli(message: Message):
+    img, text = pick()
+    await message.answer_photo(img, caption=f"Комплимент дня: {text}")
+
+@dp.message(F.text.in_({"/help", "/start"}))
+async def cmd_help(message: Message):
+    await message.answer("Напиши /kompli или используй inline:\n"
+                         "в любом чате введи @<имя_бота> и выбери карточку.")
+
+# --- Inline mode ---
+@dp.inline_query()
+async def inline_mode(query: InlineQuery):
+    img, text = pick()
+    result = InlineQueryResultPhoto(
+        id=str(uuid.uuid4()),
+        photo_url=img,
+        thumb_url=img,
+        caption=f"Комплимент дня: {text}"
+    )
+    await query.answer([result], cache_time=0, is_personal=True)
+
+# --- FastAPI app ---
+app = FastAPI()
+
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "KompliBot is running"}
+
+# --- Startup ---
+@app.on_event("startup")
+async def on_startup():
+    # установить команды (подсказки в меню)
+    await bot.set_my_commands([
+        BotCommand(command="kompli", description="Отправить комплимент дня"),
+        BotCommand(command="help", description="Показать помощь")
+    ])
+
+    # запуск aiogram-поллинга параллельно с FastAPI
+    asyncio.create_task(dp.start_polling(bot))
+
+# --- Run locally ---
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+
 
 # --- /kompli: обычная команда ---
 @bot.message_handler(commands=["kompli"])
