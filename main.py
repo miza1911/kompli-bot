@@ -18,11 +18,11 @@ from aiogram.exceptions import TelegramBadRequest
 
 # ---------- ENV ----------
 BOT_TOKEN = os.environ["BOT_TOKEN"]                 # токен от BotFather
-PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")  # напр. https://bot-xxxx.fly.dev
+PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")  # напр. https://kompli-bot.fly.dev
 
 # ---------- PATHS / STATIC ----------
 ROOT = Path(__file__).parent
-IMAGES_DIR = ROOT / "images"            # <— ТВОЯ ПАПКА С КАРТИНКАМИ В КОРНЕ
+IMAGES_DIR = ROOT / "images"            # <- твоя папка с картинками в корне
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------- DB (deck state) ----------
@@ -39,13 +39,16 @@ CREATE TABLE IF NOT EXISTS deck (
 conn.commit()
 
 def _discover_images() -> List[str]:
-    """Собираем все изображения из ./images и подпапок; пути вида '/images/sub/файл 1.png'."""
+    """
+    Собираем все изображения из ./images и подпапок.
+    Возвращаем относительные URL вида '/images/sub/файл.png'
+    """
     exts = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
     files: List[str] = []
     for p in IMAGES_DIR.rglob("*"):
         if p.is_file() and p.suffix.lower() in exts and not p.name.startswith("."):
-            rel = p.relative_to(ROOT).as_posix()   # 'images/файл 1.png'
-            files.append(f"/{rel}")                # '/images/файл 1.png'
+            rel = p.relative_to(ROOT).as_posix()  # 'images/файл 1.png'
+            files.append(f"/{rel}")               # '/images/файл 1.png'
     return files
 
 def _init_deck_if_needed():
@@ -53,12 +56,17 @@ def _init_deck_if_needed():
     if cur.fetchone() is None:
         files = _discover_images()
         random.shuffle(files)
-        conn.execute("INSERT INTO deck(id, order_json, idx) VALUES (1, ?, 0)",
-                     (json.dumps(files),))
+        conn.execute(
+            "INSERT INTO deck(id, order_json, idx) VALUES (1, ?, 0)",
+            (json.dumps(files),),
+        )
         conn.commit()
 
 def _next_image_url() -> Optional[str]:
-    """Вернёт HTTPS-URL следующей картинки, либо None если картинок нет."""
+    """
+    Вернёт HTTPS-URL следующей картинки (без повторов до конца колоды).
+    Если картинок нет — вернёт None (не бросаем исключение).
+    """
     _init_deck_if_needed()
     cur = conn.execute("SELECT order_json, idx FROM deck WHERE id = 1")
     order_json, idx = cur.fetchone()
@@ -117,6 +125,7 @@ async def on_kompli(m: types.Message):
 async def on_inline(q: InlineQuery):
     url = _next_image_url()
     if not url:
+        # нет картинок — показываем кнопку «перейти в ЛС»
         await q.answer(
             results=[],
             switch_pm_text="Добавь картинки в /images",
@@ -151,4 +160,4 @@ async def telegram_webhook(request: Request):
 
 @app.on_event("startup")
 async def on_startup():
-    await
+    await bot.set_webhook(f"{PUBLIC_URL}/webhook/{BOT_TOKEN}")
