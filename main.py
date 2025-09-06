@@ -1,97 +1,166 @@
 import os
+import json
 import random
-from uuid import uuid4
+import sqlite3
+import uuid
 from pathlib import Path
+from typing import List
 from urllib.parse import quote
 
-from telegram import Update, User, InlineQueryResultPhoto
-from telegram.ext import Application, CommandHandler, ContextTypes, InlineQueryHandler
+from fastapi import FastAPI, Request
+from fastapi.responses import PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 
-# === НАСТРОЙКИ ===
-TOKEN = os.getenv("TOKEN")  
-IMAGES_DIR = Path("images")  
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.types import InlineQuery, InlineQueryResultPhoto
+from aiogram.exceptions import TelegramBadRequest
 
 
-GITHUB_RAW_BASE = "https://raw.githubusercontent.com/miza1911/kompli-bot/main/images"
 
-EMOJI_POOL = list("✨🌟💫☀️🌈🔥🌸⭐️🌼🌻🌙💎💖💚💙💜🤍🤎")
+# ---------- ENV ----------
+BOT_TOKEN = os.environ["BOT_TOKEN"]              # токен от BotFather
+PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")  # напр. https://kompli-bot.fly.dev
 
-# ротация без повторов
-_queue: list[str] = []
+# ---------- PATHS / STATIC ----------
+ROOT = Path(__file__).parent
+IMAGES_DIR = ROOT / "static" / "images"
+if not IMAGES_DIR.exists():
+    raise RuntimeError("Создайте папку app/static/images и добавьте изображения.")
 
-def next_image() -> Path:
-    """Следующая локальная картинка без повторов до полного цикла."""
-    global _queue
-    if not _queue:
-        if not IMAGES_DIR.exists():
-            raise FileNotFoundError("Папка images не найдена в проекте")
-        files = [
-            f.name for f in IMAGES_DIR.iterdir()
-            if f.is_file() and f.suffix.lower() in {".jpg", ".jpeg", ".png", ".gif"}
-        ]
-        if not files:
-            raise FileNotFoundError("В папке images нет картинок")
+# ---------- PERSISTENT 'DECK' STATE ----------
+DB_PATH = Path(os.getenv("DB_PATH", str(ROOT / "deck_state.sqlite3")))
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+conn = sqlite3.connect(DB_PATH)
+conn.execute("""
+CREATE TABLE IF NOT EXISTS deck (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    order_json TEXT NOT NULL,
+    idx INTEGER NOT NULL
+)
+""")
+conn.commit()
+
+def _load_images() -> List[str]:
+    """
+    Собираем все изображения из app/static/images и подпапок.
+    Храним относительные пути вида '/static/images/sub/файл 1.png'
+    """
+    exts = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+    files: List[str] = []
+    for p in IMAGES_DIR.rglob("*"):
+        if (
+            p.is_file()
+            and p.suffix.lower() in exts
+            and not p.name.startswith(".")
+        ):
+            rel = p.relative_to(ROOT).as_posix()  # 'static/images/файл 1.png'
+            files.append(f"/{rel}")
+    if not files:
+        raise RuntimeError("В app/static/images нет изображений.")
+    return files
+
+def _init_deck_if_needed():
+    cur = conn.execute("SELECT order_json, idx FROM deck WHERE id = 1")
+    if cur.fetchone() is None:
+        files = _load_images()
         random.shuffle(files)
-        _queue = files
-    return IMAGES_DIR / _queue.pop()
+        conn.execute(
+            "INSERT INTO deck(id, order_json, idx) VALUES (1, ?, 0)",
+            (json.dumps(files),),
+        )
+        conn.commit()
 
-def pick_emoji() -> str:
-    return random.choice(EMOJI_POOL)
+def _get_next_image_url() -> str:
+    """Вернёт HTTPS-URL следующей картинки; на конце тасует и идёт по кругу."""
+    _init_deck_if_needed()
+    cur = conn.execute("SELECT order_json, idx FROM deck WHERE id = 1")
+    order_json, idx = cur.fetchone()
+    order = json.loads(order_json)
 
-def display_name(u: User) -> str:
-    return f"@{u.username}" if u and u.username else (u.first_name if u and u.first_name else "друг")
+    # Если набор файлов изменился на диске — пересобираем колоду
+    disk_files = _load_images()
+    if set(order) != set(disk_files):
+        order = disk_files
+        random.shuffle(order)
+        idx = 0
 
-# === КОМАНДЫ ===
-async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Привет! Напиши /kompli — И ты получишь комплимент дня! ✨"
+    if idx >= len(order):
+        random.shuffle(order)
+        idx = 0
+
+    rel = order[idx]  # '/static/images/подпапка/файл 1.png'
+    rel_quoted = "/" + quote(rel.lstrip("/"))  # кодируем пробелы/кириллицу
+    full_url = f"{PUBLIC_URL}{rel_quoted}"
+
+    idx += 1
+    conn.execute(
+        "UPDATE deck SET order_json = ?, idx = ? WHERE id = 1",
+        (json.dumps(order), idx),
     )
+    conn.commit()
+    return full_url
 
-async def cmd_kompli(update: Update, _: ContextTypes.DEFAULT_TYPE):
+# ---------- TELEGRAM ----------
+bot = Bot(BOT_TOKEN)
+dp = Dispatcher()
+
+START_TEXT = "Привет! Команда: /kompli — и ты получишь свой комплимент дня! 🌞"
+
+@dp.message(Command("start"))
+async def on_start(m: types.Message):
+    await m.answer(START_TEXT)
+
+@dp.message(Command("kompli"))
+async def on_kompli(m: types.Message):
     try:
-        img_path = next_image()
-        caption = f"Твой комплимент дня, {display_name(update.effective_user)}! {pick_emoji()}"
-        with open(img_path, "rb") as f:
-            await update.message.reply_photo(photo=f, caption=caption)
-    except Exception as e:
-        await update.message.reply_text(f"Ошибка: {e}")
+        url = _get_next_image_url()
+        uname = f"@{(m.from_user.username or m.from_user.full_name).replace(' ', '_')}"
+        caption = f"Твой комплимент дня, {uname} 🌸"
+        await m.answer_photo(photo=url, caption=caption)
+    except TelegramBadRequest:
+        await m.answer("Не удалось отправить изображение. Попробуй ещё раз чуть позже.")
 
-# === INLINE  ===
-async def inline_handler(update: Update, _: ContextTypes.DEFAULT_TYPE):
-    # даже при пустом запросе '@noskompli_bot ' показываем плитку
-    _ = (update.inline_query.query or "")
+@dp.inline_query()
+async def on_inline(q: InlineQuery):
+    """
+    Пользователь набрал @botname⎵ → показываем одну плитку.
+    По нажатию отправится фото с подписью. Почти отключаем кэш,
+    чтобы подпись адресовалась вызвавшему пользователю.
+    """
+    url = _get_next_image_url()
+    uname = f"@{(q.from_user.username or q.from_user.full_name).replace(' ', '_')}"
+    caption = f"Твой комплимент дня, {uname} 🌼"
 
-    # берём следующий файл из твоей ротации
-    local_path = next_image()
-    filename = quote(local_path.name)              # экранируем пробелы/кириллицу
-    bust = uuid4().hex                             # "соль" против кеша
-    public_url = f"{GITHUB_RAW_BASE}/{filename}?v={bust}"
+    results = [
+        InlineQueryResultPhoto(
+            id=str(uuid.uuid4()),
+            photo_url=url,
+            thumb_url=url,
+            caption=caption,
+        )
+    ]
+    await q.answer(results=results, cache_time=1, is_personal=True)
 
-    caption = f"Твой комплимент дня, {display_name(update.effective_user)}! {pick_emoji()}"
+# ---------- FASTAPI / WEBHOOK ----------
+app = FastAPI()
 
-    result = InlineQueryResultPhoto(
-        id=str(uuid4()),                           # уникальный id результата
-        photo_url=public_url,
-        thumb_url=public_url,
-        title="Отправить комплимент дня",          # заголовок плитки
-        description="Случайная картинка с подписью ✨",
-        caption=caption                            # подпись как у /kompli
-    )
+# Отдаём статику (картинки)
+app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
-    # без кеша, чтобы каждый раз была новая карточка/картинка
-    await update.inline_query.answer([result], cache_time=0, is_personal=True)
+@app.get("/", response_class=PlainTextResponse)
+def health():
+    return "ok"
 
+@app.post(f"/webhook/{BOT_TOKEN}")
+async def telegram_webhook(request: Request):
+    update = types.Update.model_validate(await request.json(), context={"bot": bot})
+    await dp.feed_update(bot, update)
+    return {"ok": True}
 
-
-def main():
-    if not TOKEN:
-        raise SystemExit("❌ Нет токена в переменной TOKEN (секрет Fly).")
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("kompli", cmd_kompli))
-    app.add_handler(InlineQueryHandler(inline_handler))
-    print("✅ Бот запущен: /kompli и inline (@бот)")
-    app.run_polling(drop_pending_updates=True)
+@app.on_event("startup")
+async def on_startup():
+    await bot.set_webhook(f"{PUBLIC_URL}/webhook/{BOT_TOKEN}")
 
 if __name__ == "__main__":
     main()
