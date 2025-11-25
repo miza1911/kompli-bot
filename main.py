@@ -2,6 +2,8 @@ import os
 import random
 import uuid
 from typing import Optional
+import asyncio
+import threading
 
 import feedparser
 from fastapi import FastAPI, Request
@@ -10,6 +12,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineQuery, InlineQueryResultPhoto
 from aiogram.exceptions import TelegramBadRequest
+import uvicorn
 
 # ---------- ENV ----------
 BOT_TOKEN = os.environ["BOT_TOKEN"]
@@ -18,14 +21,12 @@ PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")
 # ---------- PINTEREST RSS ----------
 PINTEREST_RSS = [
     "https://ru.pinterest.com/sisiboroda/komplik.rss",
-    # можно добавить ещё доски, например "Доброе утро"
 ]
 
 _seen_images = set()
 _all_images_cache = []
 
 def load_images_from_rss() -> list:
-    """Загружаем все картинки из RSS и кешируем."""
     global _all_images_cache
     if _all_images_cache:
         return _all_images_cache
@@ -49,7 +50,6 @@ def load_images_from_rss() -> list:
     return _all_images_cache
 
 def get_next_pinterest_image() -> Optional[str]:
-    """Возвращает случайную неповторяющуюся картинку из RSS."""
     global _seen_images
     images = load_images_from_rss()
     if not images:
@@ -124,3 +124,13 @@ async def telegram_webhook(request: Request):
 @app.on_event("startup")
 async def on_startup():
     await bot.set_webhook(f"{PUBLIC_URL}/webhook/{BOT_TOKEN}")
+
+# ---------- RUN SERVER FOR FLY.IO ----------
+def start_server():
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
+# запускаем сервер в отдельном потоке, бот работает через webhook
+threading.Thread(target=start_server, daemon=True).start()
+
+# Не блокируем основной поток, чтобы Fly.io считал процесс живым
+asyncio.get_event_loop().run_forever()
