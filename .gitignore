@@ -4,3 +4,5 @@
 # кэш python
 __pycache__/
 *.pyc
+images/
+deck_state.sqlite3
