@@ -2,8 +2,6 @@ import os
 import random
 import uuid
 from typing import Optional
-import asyncio
-import threading
 
 import feedparser
 from fastapi import FastAPI, Request
@@ -12,7 +10,6 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineQuery, InlineQueryResultPhoto
 from aiogram.exceptions import TelegramBadRequest
-import uvicorn
 
 # ---------- ENV ----------
 BOT_TOKEN = os.environ["BOT_TOKEN"]
@@ -126,11 +123,7 @@ async def on_startup():
     await bot.set_webhook(f"{PUBLIC_URL}/webhook/{BOT_TOKEN}")
 
 # ---------- RUN SERVER FOR FLY.IO ----------
-def start_server():
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 
-# запускаем сервер в отдельном потоке, бот работает через webhook
-threading.Thread(target=start_server, daemon=True).start()
-
-# Не блокируем основной поток, чтобы Fly.io считал процесс живым
-asyncio.get_event_loop().run_forever()
