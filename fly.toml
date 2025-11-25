@@ -6,7 +6,8 @@ kill_timeout = 5
 [build]
   image = "python:3.11"
 
-
+[env]
+  PORT = "8080"
 
 [[services]]
   internal_port = 8080
