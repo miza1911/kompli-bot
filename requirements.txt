@@ -1,4 +1,4 @@
-aiogram
-fastapi
-feedparser
-uvicorn[standard]
+aiogram==3.2.0
+feedparser==6.0.10
+fastapi==0.117.0
+uvicorn==0.23.0
