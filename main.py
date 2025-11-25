@@ -1,54 +1,31 @@
 import os
-import json
 import random
-import sqlite3
 import uuid
-from pathlib import Path
-from typing import List, Optional
-from urllib.parse import quote
+from typing import Optional
 
+import feedparser
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
-from fastapi.staticfiles import StaticFiles
-
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineQuery, InlineQueryResultPhoto
 from aiogram.exceptions import TelegramBadRequest
 
-import feedparser
-
 # ---------- ENV ----------
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")
 
-# ---------- PATHS / STATIC ----------
-ROOT = Path(__file__).parent
-IMAGES_DIR = ROOT / "images"
-IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-
-# ---------- DB (deck state) ----------
-DB_PATH = Path(os.getenv("DB_PATH", str(ROOT / "deck_state.sqlite3")))
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-conn = sqlite3.connect(DB_PATH)
-conn.execute("""
-CREATE TABLE IF NOT EXISTS deck (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    order_json TEXT NOT NULL,
-    idx INTEGER NOT NULL
-)
-""")
-conn.commit()
-
 # ---------- PINTEREST RSS ----------
 PINTEREST_RSS = [
     "https://ru.pinterest.com/sisiboroda/komplik.rss",
-    "https://www.pinterest.com/<username>/<board2>.rss",
+    # можно добавить ещё доски, например "Доброе утро"
 ]
+
 _seen_images = set()
 _all_images_cache = []
 
 def load_images_from_rss() -> list:
+    """Загружаем все картинки из RSS и кешируем."""
     global _all_images_cache
     if _all_images_cache:
         return _all_images_cache
@@ -72,8 +49,11 @@ def load_images_from_rss() -> list:
     return _all_images_cache
 
 def get_next_pinterest_image() -> Optional[str]:
+    """Возвращает случайную неповторяющуюся картинку из RSS."""
     global _seen_images
     images = load_images_from_rss()
+    if not images:
+        return None
     if len(_seen_images) >= len(images):
         _seen_images = set()
     available = [x for x in images if x not in _seen_images]
@@ -86,6 +66,7 @@ def get_next_pinterest_image() -> Optional[str]:
 # ---------- TELEGRAM ----------
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
+
 START_TEXT = "Привет! Команда: /kompli — и ты получишь свой комплимент дня! 🌞"
 
 @dp.message(Command("start"))
@@ -129,7 +110,6 @@ async def on_inline(q: InlineQuery):
 
 # ---------- FASTAPI / WEBHOOK ----------
 app = FastAPI()
-app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images")
 
 @app.get("/", response_class=PlainTextResponse)
 def health():
