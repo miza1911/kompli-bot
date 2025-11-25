@@ -1,1 +1,5 @@
+aiogram
+fastapi
+feedparser
+uvicorn
 
