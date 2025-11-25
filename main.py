@@ -1,20 +1,27 @@
 import os
 import random
-import uuid
-from typing import Optional
-
+from uuid import uuid4
 import feedparser
-from fastapi import FastAPI, Request
-from fastapi.responses import PlainTextResponse
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.types import InlineQuery, InlineQueryResultPhoto
-from aiogram.exceptions import TelegramBadRequest
-import uvicorn
 
-# ---------- ENV ----------
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")
+from telegram import (
+    InlineQueryResultArticle,
+    InputTextMessageContent,
+    InputMediaPhoto,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
+from telegram.constants import ParseMode
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    InlineQueryHandler,
+    ChosenInlineResultHandler,
+    CallbackQueryHandler,
+)
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+EMOJIS = ["✨", "🌟", "🍀", "🌈", "💫", "🧿", "🪄", "🎉", "☀️", "🌸"]
 
 # ---------- PINTEREST RSS ----------
 PINTEREST_RSS = [
@@ -42,88 +49,112 @@ def load_images_from_rss() -> list:
                     for l in entry.links:
                         if l.get("type", "").startswith("image"):
                             all_imgs.append(l["href"])
-        except:
-            pass
+        except Exception as e:
+            print(f"RSS load error: {e}")
     _all_images_cache = list(set(all_imgs))
     return _all_images_cache
 
-def get_next_pinterest_image() -> Optional[str]:
+def pick_random_photo() -> str:
     global _seen_images
     images = load_images_from_rss()
     if not images:
-        return None
+        return "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee"
+
     if len(_seen_images) >= len(images):
         _seen_images = set()
-    available = [x for x in images if x not in _seen_images]
-    if not available:
-        return None
-    img = random.choice(available)
-    _seen_images.add(img)
-    return img
+    pool = [x for x in images if x not in _seen_images] or images
+    url = random.choice(pool)
+    _seen_images.add(url)
+    return url
 
-# ---------- TELEGRAM ----------
-bot = Bot(BOT_TOKEN)
-dp = Dispatcher()
+def username_or_name(user) -> str:
+    if user.username:
+        return f"@{user.username}"
+    name = (user.first_name or "").strip() or "Гость"
+    return name
 
-START_TEXT = "Привет! Команда: /kompli — и ты получишь свой комплимент дня! 🌞"
+def make_caption(for_user) -> str:
+    return f"{for_user} · Твой комплимент дня! {random.choice(EMOJIS)}"
 
-@dp.message(Command("start"))
-async def on_start(m: types.Message):
-    await m.answer(START_TEXT)
+# ---------- HANDLERS ----------
+async def start(update, context: ContextTypes.DEFAULT_TYPE):
+    msg = (
+        "Привет! Я умею делать комплименты. 🌸\n\n"
+        "• Для получения комплимента: /kompli"
+    )
+    await update.message.reply_text(msg)
 
-@dp.message(Command("kompli"))
-async def on_kompli(m: types.Message):
-    url = get_next_pinterest_image()
-    if not url:
-        await m.answer("Не удалось получить изображение. Проверь RSS ссылки.")
+async def kompli(update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    caption = make_caption(username_or_name(user))
+    photo_url = pick_random_photo()
+    await update.message.reply_photo(photo=photo_url, caption=caption, parse_mode=ParseMode.HTML)
+
+# ---------- INLINE ----------
+ARTICLE_ID = "predict_inline"
+BTN_PAYLOAD = "go_predict"
+
+async def inline_query(update, context: ContextTypes.DEFAULT_TYPE):
+    preview_url = pick_random_photo()
+    result = InlineQueryResultArticle(
+        id=ARTICLE_ID,
+        title="Получить комплимент дня!🎉",
+        description="Нажми — и придет твой комплимент!",
+        input_message_content=InputTextMessageContent("⏳ Получаю комплимент…"),
+        thumbnail_url=preview_url,
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Получить сейчас", callback_data=BTN_PAYLOAD)]]
+        ),
+    )
+    await update.inline_query.answer([result], cache_time=0, is_personal=True)
+
+async def on_chosen_inline(update, context: ContextTypes.DEFAULT_TYPE):
+    chosen = update.chosen_inline_result
+    if not chosen or chosen.result_id != ARTICLE_ID or not chosen.inline_message_id:
         return
+
+    user = chosen.from_user
+    caption = make_caption(username_or_name(user))
+    photo_url = pick_random_photo()
     try:
-        uname = f"@{(m.from_user.username or m.from_user.full_name).replace(' ', '_')}"
-        caption = f"Твой комплимент дня, {uname} 🌸"
-        await m.answer_photo(photo=url, caption=caption)
-    except TelegramBadRequest:
-        await m.answer("Не удалось отправить изображение. Попробуй позже.")
-
-@dp.inline_query()
-async def on_inline(q: InlineQuery):
-    url = get_next_pinterest_image()
-    if not url:
-        await q.answer(
-            results=[],
-            switch_pm_text="Нет картинок",
-            switch_pm_parameter="noimages",
-            cache_time=1,
-            is_personal=True
+        await context.bot.edit_message_media(
+            inline_message_id=chosen.inline_message_id,
+            media=InputMediaPhoto(media=photo_url, caption=caption, parse_mode=ParseMode.HTML),
+            reply_markup=None,
         )
+    except Exception as e:
+        print(f"edit_message_media (chosen) failed: {e}")
+
+async def on_callback(update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if not q or q.data != BTN_PAYLOAD:
         return
-    uname = f"@{(q.from_user.username or q.from_user.full_name).replace(' ', '_')}"
-    caption = f"Твой комплимент дня, {uname} 🌼"
-    results = [InlineQueryResultPhoto(
-        id=str(uuid.uuid4()),
-        photo_url=url,
-        thumb_url=url,
-        caption=caption
-    )]
-    await q.answer(results=results, cache_time=1, is_personal=True)
+    user = q.from_user
+    caption = make_caption(username_or_name(user))
+    photo_url = pick_random_photo()
+    try:
+        await q.edit_message_media(
+            media=InputMediaPhoto(media=photo_url, caption=caption, parse_mode=ParseMode.HTML)
+        )
+    except Exception as e:
+        print(f"edit_message_media (callback) failed: {e}")
 
-# ---------- FASTAPI / WEBHOOK ----------
-app = FastAPI()
+# ---------- MAIN ----------
+def main():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN не найден. Добавь его в Secrets на Fly")
 
-@app.get("/", response_class=PlainTextResponse)
-def health():
-    return "ok"
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler(["start", "help"], start))
+    app.add_handler(CommandHandler(["kompli"], kompli))
+    app.add_handler(InlineQueryHandler(inline_query))
+    app.add_handler(ChosenInlineResultHandler(on_chosen_inline))
+    app.add_handler(CallbackQueryHandler(on_callback))
 
-@app.post(f"/webhook/{BOT_TOKEN}")
-async def telegram_webhook(request: Request):
-    update = types.Update.model_validate(await request.json(), context={"bot": bot})
-    await dp.feed_update(bot, update)
-    return {"ok": True}
+    print("Kompli bot is running…")
+    app.run_polling(allowed_updates=[
+        "message", "inline_query", "chosen_inline_result", "callback_query"
+    ])
 
-@app.on_event("startup")
-async def on_startup():
-    # ставим webhook на Fly URL
-    await bot.set_webhook(f"{PUBLIC_URL}/webhook/{BOT_TOKEN}")
-
-# ---------- RUN SERVER ----------
-# Важно: всегда запускаем uvicorn, без if __name__ == "__main__"
-uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+if __name__ == "__main__":
+    main()
