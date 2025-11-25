@@ -16,13 +16,15 @@ from aiogram.filters import Command
 from aiogram.types import InlineQuery, InlineQueryResultPhoto
 from aiogram.exceptions import TelegramBadRequest
 
+import feedparser
+
 # ---------- ENV ----------
-BOT_TOKEN = os.environ["BOT_TOKEN"]                 # токен от BotFather
-PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")  # напр. https://kompli-bot.fly.dev
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")
 
 # ---------- PATHS / STATIC ----------
 ROOT = Path(__file__).parent
-IMAGES_DIR = ROOT / "images"            # <- твоя папка с картинками в корне
+IMAGES_DIR = ROOT / "images"
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------- DB (deck state) ----------
@@ -38,70 +40,52 @@ CREATE TABLE IF NOT EXISTS deck (
 """)
 conn.commit()
 
-def _discover_images() -> List[str]:
-    """
-    Собираем все изображения из ./images и подпапок.
-    Возвращаем относительные URL вида '/images/sub/файл.png'
-    """
-    exts = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
-    files: List[str] = []
-    for p in IMAGES_DIR.rglob("*"):
-        if p.is_file() and p.suffix.lower() in exts and not p.name.startswith("."):
-            rel = p.relative_to(ROOT).as_posix()  # 'images/файл 1.png'
-            files.append(f"/{rel}")               # '/images/файл 1.png'
-    return files
+# ---------- PINTEREST RSS ----------
+PINTEREST_RSS = [
+    "https://www.pinterest.com/<username>/<board1>.rss",
+    "https://www.pinterest.com/<username>/<board2>.rss",
+]
+_seen_images = set()
+_all_images_cache = []
 
-def _init_deck_if_needed():
-    cur = conn.execute("SELECT order_json, idx FROM deck WHERE id = 1")
-    if cur.fetchone() is None:
-        files = _discover_images()
-        random.shuffle(files)
-        conn.execute(
-            "INSERT INTO deck(id, order_json, idx) VALUES (1, ?, 0)",
-            (json.dumps(files),),
-        )
-        conn.commit()
+def load_images_from_rss() -> list:
+    global _all_images_cache
+    if _all_images_cache:
+        return _all_images_cache
+    all_imgs = []
+    for rss in PINTEREST_RSS:
+        try:
+            feed = feedparser.parse(rss)
+            for entry in feed.entries:
+                if "media_content" in entry:
+                    for media in entry.media_content:
+                        url = media.get("url")
+                        if url and url.startswith("http"):
+                            all_imgs.append(url)
+                elif "links" in entry:
+                    for l in entry.links:
+                        if l.get("type", "").startswith("image"):
+                            all_imgs.append(l["href"])
+        except:
+            pass
+    _all_images_cache = list(set(all_imgs))
+    return _all_images_cache
 
-def _next_image_url() -> Optional[str]:
-    """
-    Вернёт HTTPS-URL следующей картинки (без повторов до конца колоды).
-    Если картинок нет — вернёт None (не бросаем исключение).
-    """
-    _init_deck_if_needed()
-    cur = conn.execute("SELECT order_json, idx FROM deck WHERE id = 1")
-    order_json, idx = cur.fetchone()
-    order = json.loads(order_json)
-
-    disk_files = _discover_images()
-    if set(order) != set(disk_files):
-        order = disk_files
-        random.shuffle(order)
-        idx = 0
-
-    if not order:
-        conn.execute("UPDATE deck SET order_json = ?, idx = 0 WHERE id = 1",
-                     (json.dumps(order),))
-        conn.commit()
+def get_next_pinterest_image() -> Optional[str]:
+    global _seen_images
+    images = load_images_from_rss()
+    if len(_seen_images) >= len(images):
+        _seen_images = set()
+    available = [x for x in images if x not in _seen_images]
+    if not available:
         return None
-
-    if idx >= len(order):
-        random.shuffle(order)
-        idx = 0
-
-    rel = order[idx]                      # '/images/подпапка/файл 1.png'
-    rel_quoted = "/" + quote(rel.lstrip("/"))
-    full_url = f"{PUBLIC_URL}{rel_quoted}"
-
-    idx += 1
-    conn.execute("UPDATE deck SET order_json = ?, idx = ? WHERE id = 1",
-                 (json.dumps(order), idx))
-    conn.commit()
-    return full_url
+    img = random.choice(available)
+    _seen_images.add(img)
+    return img
 
 # ---------- TELEGRAM ----------
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
-
 START_TEXT = "Привет! Команда: /kompli — и ты получишь свой комплимент дня! 🌞"
 
 @dp.message(Command("start"))
@@ -110,27 +94,27 @@ async def on_start(m: types.Message):
 
 @dp.message(Command("kompli"))
 async def on_kompli(m: types.Message):
-    url = _next_image_url()
+    url = get_next_pinterest_image()
     if not url:
-        await m.answer("Пока нет изображений. Залей их в папку repo:/images и попробуй ещё раз.")
+        await m.answer("Не удалось получить изображение. Проверь RSS ссылки.")
         return
     try:
         uname = f"@{(m.from_user.username or m.from_user.full_name).replace(' ', '_')}"
         caption = f"Твой комплимент дня, {uname} 🌸"
         await m.answer_photo(photo=url, caption=caption)
     except TelegramBadRequest:
-        await m.answer("Не удалось отправить изображение. Попробуй ещё раз чуть позже.")
+        await m.answer("Не удалось отправить изображение. Попробуй позже.")
 
 @dp.inline_query()
 async def on_inline(q: InlineQuery):
-    url = _next_image_url()
+    url = get_next_pinterest_image()
     if not url:
-        # нет картинок — показываем кнопку «перейти в ЛС»
         await q.answer(
             results=[],
-            switch_pm_text="Добавь картинки в /images",
+            switch_pm_text="Нет картинок",
             switch_pm_parameter="noimages",
-            cache_time=1, is_personal=True
+            cache_time=1,
+            is_personal=True
         )
         return
     uname = f"@{(q.from_user.username or q.from_user.full_name).replace(' ', '_')}"
@@ -145,7 +129,6 @@ async def on_inline(q: InlineQuery):
 
 # ---------- FASTAPI / WEBHOOK ----------
 app = FastAPI()
-# раздаём статику: https://<app>.fly.dev/images/<file>
 app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images")
 
 @app.get("/", response_class=PlainTextResponse)
