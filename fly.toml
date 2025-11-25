@@ -5,5 +5,5 @@ primary_region = "sin"
   dockerfile = "Dockerfile"
 
 [env]
-  # На Fly добавляем через secrets: BOT_TOKEN
-  # PORT здесь не нужен для long-polling
+  # BOT_TOKEN добавляем через Fly Secrets
+  # fly secrets set BOT_TOKEN=твой_токен
