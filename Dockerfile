@@ -12,6 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 ENV PYTHONUNBUFFERED=1
-ENV PORT=8080
 
+# Long-polling не использует HTTP порт
 CMD ["python", "main.py"]
