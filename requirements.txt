@@ -1,5 +1,4 @@
 aiogram
 fastapi
 feedparser
-uvicorn
-
+uvicorn[standard]
