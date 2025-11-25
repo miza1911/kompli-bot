@@ -1,13 +1,9 @@
+app = "kompli-bot"
+primary_region = "sin"
+
 [build]
-  image = "python:3.11-slim"
+  dockerfile = "Dockerfile"
 
-[[services]]
-  internal_port = 8080
-  protocol = "tcp"
-  [[services.ports]]
-    port = 80
-  [[services.ports]]
-    port = 443
-
-[deploy]
-  release_command = "uvicorn main:app --host 0.0.0.0 --port 8080"
+[env]
+  # На Fly добавляем через secrets: BOT_TOKEN
+  # PORT здесь не нужен для long-polling
