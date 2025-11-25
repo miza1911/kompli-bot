@@ -1,23 +1,13 @@
-app = "kompli-bot"
-
 [build]
   image = "python:3.11-slim"
-
-[env]
-  # Токены и публичный URL НЕ пушим в git! Добавляй через fly secrets:
-  # fly secrets set BOT_TOKEN=your_token
-  # fly secrets set PUBLIC_URL=https://kompli-bot.fly.dev
-
-# Указываем процесс web, который Fly будет держать живым
-[processes.web]
-command = "python3 main.py"
 
 [[services]]
   internal_port = 8080
   protocol = "tcp"
-
   [[services.ports]]
     port = 80
-
   [[services.ports]]
     port = 443
+
+[deploy]
+  release_command = "uvicorn main:app --host 0.0.0.0 --port 8080"
