@@ -42,7 +42,7 @@ conn.commit()
 
 # ---------- PINTEREST RSS ----------
 PINTEREST_RSS = [
-    "https://www.pinterest.com/<username>/<board1>.rss",
+    "https://ru.pinterest.com/sisiboroda/komplik.rss",
     "https://www.pinterest.com/<username>/<board2>.rss",
 ]
 _seen_images = set()
