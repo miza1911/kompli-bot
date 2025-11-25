@@ -10,6 +10,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineQuery, InlineQueryResultPhoto
 from aiogram.exceptions import TelegramBadRequest
+import uvicorn
 
 # ---------- ENV ----------
 BOT_TOKEN = os.environ["BOT_TOKEN"]
@@ -120,10 +121,9 @@ async def telegram_webhook(request: Request):
 
 @app.on_event("startup")
 async def on_startup():
+    # ставим webhook на Fly URL
     await bot.set_webhook(f"{PUBLIC_URL}/webhook/{BOT_TOKEN}")
 
-# ---------- RUN SERVER FOR FLY.IO ----------
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
-
+# ---------- RUN SERVER ----------
+# Важно: всегда запускаем uvicorn, без if __name__ == "__main__"
+uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
